@@ -1,0 +1,4 @@
+mcp
+requests
+requests-oauthlib
+python-dotenv
