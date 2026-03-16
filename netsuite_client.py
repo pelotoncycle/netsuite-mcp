@@ -3,6 +3,15 @@ from requests_oauthlib import OAuth1
 import requests
 
 
+class NetSuiteAPIError(Exception):
+    """Raised when the NetSuite API returns an HTTP error response."""
+
+    def __init__(self, status_code: int, body: str):
+        self.status_code = status_code
+        self.body = body
+        super().__init__(f"NetSuite API error {status_code}: {body}")
+
+
 class NetSuiteClient:
     def __init__(self):
         self.account_id = os.environ["NETSUITE_ACCOUNT_ID"]
@@ -16,13 +25,20 @@ class NetSuiteClient:
             realm=self.account_id.upper().replace("-", "_"),
         )
 
+    def _raise_for_status(self, response: requests.Response) -> None:
+        """Raise NetSuiteAPIError with the full response body on HTTP errors."""
+        try:
+            response.raise_for_status()
+        except requests.HTTPError:
+            raise NetSuiteAPIError(response.status_code, response.text)
+
     def suiteql(self, query: str, limit: int = 1000, offset: int = 0) -> dict:
         url = f"{self.base_url}/query/v1/suiteql"
         headers = {"Content-Type": "application/json", "Prefer": "transient"}
         payload = {"q": query}
         params = {"limit": limit, "offset": offset}
         response = requests.post(url, json=payload, params=params, headers=headers, auth=self.auth)
-        response.raise_for_status()
+        self._raise_for_status(response)
         return response.json()
 
     def get_record(self, record_type: str, record_id: str, fields: list[str] | None = None) -> dict:
@@ -31,11 +47,11 @@ class NetSuiteClient:
         if fields:
             params["fields"] = ",".join(fields)
         response = requests.get(url, params=params, auth=self.auth)
-        response.raise_for_status()
+        self._raise_for_status(response)
         return response.json()
 
     def list_record_types(self) -> dict:
         url = f"{self.base_url}/record/v1/metadata-catalog"
         response = requests.get(url, auth=self.auth, headers={"Accept": "application/json"})
-        response.raise_for_status()
+        self._raise_for_status(response)
         return response.json()
