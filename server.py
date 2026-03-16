@@ -111,7 +111,7 @@ Common accttype values: Bank, AcctRec, AcctPay, Income, COGS, Expense, OthCurrAs
    group by entity ID, then resolve names separately
 4. **No amount/amountremaining on vendorbill** — use `custbody_pel_usd_equivalent` for USD totals; `total` exists but is in the bill's local currency and must not be aggregated across vendors
 5. **Date syntax** — prefer `TO_DATE('2025-01-01', 'YYYY-MM-DD')` for date comparisons
-6. **Pagination** — max 1000 rows; check `hasMore` in results and increment `offset` by 1000
+6. **Pagination** — max 1000 rows; check `has_more` in results and pass `next_offset` as the offset for the next page
 
 ---
 
@@ -209,8 +209,16 @@ def suiteql_query(query: str, limit: int = 1000, offset: int = 0) -> str:
     2. Resolve names in a second query against the vendor or entity table
 
     ## Pagination
-    Max 1000 rows per request. Check hasMore in the result and use offset to paginate.
-    Example for page 2: suiteql_query(query, offset=1000)
+    Max 1000 rows per request. If has_more is true in the result, call again
+    with the returned next_offset value to fetch the next page.
+
+    ## Response shape
+    {
+      "rows":        [...],   -- the result rows
+      "row_count":   N,       -- number of rows in this page
+      "has_more":    bool,    -- true if more pages exist
+      "next_offset": N|null   -- pass as offset to fetch the next page; null when has_more is false
+    }
 
     ## Examples
 
@@ -247,7 +255,16 @@ def suiteql_query(query: str, limit: int = 1000, offset: int = 0) -> str:
     """
     try:
         result = client.suiteql(query, limit=limit, offset=offset)
-        return json.dumps(result, indent=2)
+        has_more = result.get("hasMore", False)
+        return json.dumps(
+            {
+                "rows": result.get("items", []),
+                "row_count": result.get("count", 0),
+                "has_more": has_more,
+                "next_offset": offset + limit if has_more else None,
+            },
+            indent=2,
+        )
     except NetSuiteAPIError as e:
         return f"NetSuite API error {e.status_code}: {e.body}"
     except Exception as e:

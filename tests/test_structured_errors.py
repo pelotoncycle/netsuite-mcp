@@ -125,4 +125,4 @@ class TestServerToolErrorHandling:
         mocker.patch.object(self.server.client, "suiteql", return_value=payload)
         result = self.server.suiteql_query("SELECT id FROM vendor")
         parsed = json.loads(result)
-        assert parsed["items"][0]["id"] == "1"
+        assert parsed["rows"][0]["id"] == "1"
