@@ -2,7 +2,7 @@ import json
 import os
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
-from netsuite_client import NetSuiteClient
+from netsuite_client import NetSuiteClient, NetSuiteAPIError
 
 load_dotenv()
 
@@ -96,6 +96,8 @@ def suiteql_query(query: str, limit: int = 1000, offset: int = 0) -> str:
     try:
         result = client.suiteql(query, limit=limit, offset=offset)
         return json.dumps(result, indent=2)
+    except NetSuiteAPIError as e:
+        return f"NetSuite API error {e.status_code}: {e.body}"
     except Exception as e:
         return f"Error executing SuiteQL query: {str(e)}"
 
@@ -116,6 +118,8 @@ def get_record(record_type: str, record_id: str, fields: str = "") -> str:
         field_list = [f.strip() for f in fields.split(",") if f.strip()] if fields else None
         result = client.get_record(record_type, record_id, fields=field_list)
         return json.dumps(result, indent=2)
+    except NetSuiteAPIError as e:
+        return f"NetSuite API error {e.status_code}: {e.body}"
     except Exception as e:
         return f"Error fetching record: {str(e)}"
 
@@ -133,6 +137,8 @@ def list_record_types() -> str:
             types = [{"name": item.get("name"), "id": item.get("id")} for item in result["items"]]
             return json.dumps(types, indent=2)
         return json.dumps(result, indent=2)
+    except NetSuiteAPIError as e:
+        return f"NetSuite API error {e.status_code}: {e.body}"
     except Exception as e:
         return f"Error listing record types: {str(e)}"
 
