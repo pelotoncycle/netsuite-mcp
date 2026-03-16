@@ -1,5 +1,7 @@
 import os
 from requests_oauthlib import OAuth1
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import requests
 
 # (connect_timeout, read_timeout) in seconds.
@@ -8,6 +10,17 @@ import requests
 # SuiteQL queries can be slow on a loaded instance; 120s read timeout is
 # generous but still prevents infinite hangs from tying up the connection.
 DEFAULT_TIMEOUT = (10, 120)
+
+# Retry on transient server-side and rate-limit errors.
+# backoff_factor=2 means waits of 2s, 4s, 8s between attempts,
+# giving NetSuite time to recover rather than immediately hammering it again.
+DEFAULT_RETRY = Retry(
+    total=3,
+    backoff_factor=2,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET", "POST"],
+    raise_on_status=False,
+)
 
 
 class NetSuiteAPIError(Exception):
@@ -20,7 +33,7 @@ class NetSuiteAPIError(Exception):
 
 
 class NetSuiteClient:
-    def __init__(self, timeout: tuple[int, int] = DEFAULT_TIMEOUT):
+    def __init__(self, timeout: tuple[int, int] = DEFAULT_TIMEOUT, retry: Retry = DEFAULT_RETRY):
         self.account_id = os.environ["NETSUITE_ACCOUNT_ID"]
         self.base_url = f"https://{self.account_id.replace('_', '-').lower()}.suitetalk.api.netsuite.com/services/rest"
         self.timeout = timeout
@@ -34,6 +47,9 @@ class NetSuiteClient:
         )
         self.session = requests.Session()
         self.session.auth = auth
+        adapter = HTTPAdapter(max_retries=retry)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
 
     def _raise_for_status(self, response: requests.Response) -> None:
         """Raise NetSuiteAPIError with the full response body on HTTP errors."""
