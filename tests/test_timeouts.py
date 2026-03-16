@@ -8,15 +8,8 @@ Verifies that:
 - Timeout errors surface as requests.Timeout (not silently swallowed)
 """
 import json
-import os
 import pytest
 import requests
-
-os.environ.setdefault("NETSUITE_ACCOUNT_ID", "test_account")
-os.environ.setdefault("NETSUITE_CONSUMER_KEY", "ck")
-os.environ.setdefault("NETSUITE_CONSUMER_SECRET", "cs")
-os.environ.setdefault("NETSUITE_TOKEN_ID", "ti")
-os.environ.setdefault("NETSUITE_TOKEN_SECRET", "ts")
 
 from netsuite_client import NetSuiteClient, DEFAULT_TIMEOUT
 

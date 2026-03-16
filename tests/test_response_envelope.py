@@ -11,14 +11,7 @@ Verifies that:
 - Error path is unchanged
 """
 import json
-import os
 import pytest
-
-os.environ.setdefault("NETSUITE_ACCOUNT_ID", "test_account")
-os.environ.setdefault("NETSUITE_CONSUMER_KEY", "ck")
-os.environ.setdefault("NETSUITE_CONSUMER_SECRET", "cs")
-os.environ.setdefault("NETSUITE_TOKEN_ID", "ti")
-os.environ.setdefault("NETSUITE_TOKEN_SECRET", "ts")
 
 import server
 

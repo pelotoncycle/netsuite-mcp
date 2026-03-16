@@ -9,17 +9,10 @@ Verifies that:
 - raise_on_status is False so we can call _raise_for_status() ourselves
 """
 import json
-import os
 import pytest
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
-os.environ.setdefault("NETSUITE_ACCOUNT_ID", "test_account")
-os.environ.setdefault("NETSUITE_CONSUMER_KEY", "ck")
-os.environ.setdefault("NETSUITE_CONSUMER_SECRET", "cs")
-os.environ.setdefault("NETSUITE_TOKEN_ID", "ti")
-os.environ.setdefault("NETSUITE_TOKEN_SECRET", "ts")
 
 from netsuite_client import NetSuiteClient, NetSuiteAPIError, DEFAULT_RETRY
 
