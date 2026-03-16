@@ -8,14 +8,6 @@ Verifies that:
 - The prompt is registered on the FastMCP instance
 - Key schema sections are present in the content
 """
-import os
-
-os.environ.setdefault("NETSUITE_ACCOUNT_ID", "test_account")
-os.environ.setdefault("NETSUITE_CONSUMER_KEY", "ck")
-os.environ.setdefault("NETSUITE_CONSUMER_SECRET", "cs")
-os.environ.setdefault("NETSUITE_TOKEN_ID", "ti")
-os.environ.setdefault("NETSUITE_TOKEN_SECRET", "ts")
-
 import server
 
 

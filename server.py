@@ -1,13 +1,21 @@
 import json
+import logging
 import os
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from netsuite_client import NetSuiteClient, NetSuiteAPIError
 
 load_dotenv()
+logging.basicConfig(level=logging.WARNING)
 
 mcp = FastMCP("NetSuite")
 client = NetSuiteClient()
+
+# ---------------------------------------------------------------------------
+# Schema guide — single source of truth shared by the resource and prompt.
+# Dates are intentionally omitted from examples; use today's date at query
+# time rather than stale hardcoded values.
+# ---------------------------------------------------------------------------
 
 _SCHEMA_GUIDE_CONTENT = """
 # NetSuite SuiteQL Schema Guide
@@ -108,9 +116,9 @@ Common accttype values: Bank, AcctRec, AcctPay, Income, COGS, Expense, OthCurrAs
 1. **vendorbill vs transaction** — always use the `vendorbill` table for AP bills
 2. **account.accttype not account.type** — `type` is a reserved word and breaks queries
 3. **entity JOIN in GROUP BY** — joining entity.altname in a GROUP BY errors out;
-   group by entity ID, then resolve names separately
+   group by entity ID, then resolve names separately (use the `resolve_ids` tool)
 4. **No amount/amountremaining on vendorbill** — use `custbody_pel_usd_equivalent` for USD totals; `total` exists but is in the bill's local currency and must not be aggregated across vendors
-5. **Date syntax** — prefer `TO_DATE('2025-01-01', 'YYYY-MM-DD')` for date comparisons
+5. **Date syntax** — prefer `TO_DATE('YYYY-MM-DD', 'YYYY-MM-DD')` for date comparisons; always use today's actual date, never hardcode stale dates
 6. **Pagination** — max 1000 rows; check `has_more` in results and pass `next_offset` as the offset for the next page
 
 ---
@@ -118,25 +126,21 @@ Common accttype values: Bank, AcctRec, AcctPay, Income, COGS, Expense, OthCurrAs
 ## Useful Query Patterns
 
 ### AP Aging (open bills only, USD amounts)
+Use today's date to compute bucket boundaries (current date minus 30/60/90 days).
+
     SELECT
       CASE
-        WHEN duedate >= TO_DATE('2026-03-13','YYYY-MM-DD') THEN 'Current'
-        WHEN duedate >= TO_DATE('2026-02-11','YYYY-MM-DD') THEN '1-30 Days'
-        WHEN duedate >= TO_DATE('2026-01-12','YYYY-MM-DD') THEN '31-60 Days'
-        WHEN duedate >= TO_DATE('2025-12-13','YYYY-MM-DD') THEN '61-90 Days'
+        WHEN duedate >= TO_DATE('<today>','YYYY-MM-DD') THEN 'Current'
+        WHEN duedate >= TO_DATE('<today-30>','YYYY-MM-DD') THEN '1-30 Days'
+        WHEN duedate >= TO_DATE('<today-60>','YYYY-MM-DD') THEN '31-60 Days'
+        WHEN duedate >= TO_DATE('<today-90>','YYYY-MM-DD') THEN '61-90 Days'
         ELSE '90+ Days'
       END AS aging_bucket,
       COUNT(*) AS bill_count,
       SUM(custbody_pel_usd_equivalent) AS total_usd
     FROM vendorbill
     WHERE status = 'A'
-    GROUP BY CASE
-        WHEN duedate >= TO_DATE('2026-03-13','YYYY-MM-DD') THEN 'Current'
-        WHEN duedate >= TO_DATE('2026-02-11','YYYY-MM-DD') THEN '1-30 Days'
-        WHEN duedate >= TO_DATE('2026-01-12','YYYY-MM-DD') THEN '31-60 Days'
-        WHEN duedate >= TO_DATE('2025-12-13','YYYY-MM-DD') THEN '61-90 Days'
-        ELSE '90+ Days'
-    END
+    GROUP BY <same CASE expression>
 
 ### GL Detail for an Account
     SELECT t.trandate, t.tranid, t.memo, tl.debit, tl.credit
@@ -151,66 +155,29 @@ Common accttype values: Bank, AcctRec, AcctPay, Income, COGS, Expense, OthCurrAs
     WHERE status = 'A'
     GROUP BY entity
     ORDER BY SUM(custbody_pel_usd_equivalent) DESC
-    -- Then resolve entity IDs: SELECT id, entityid, companyname FROM vendor WHERE id IN (...)
+    -- Then resolve entity IDs with the resolve_ids tool: record_type='vendor', ids=[...]
 
 ### Journal Entries
     SELECT id, trandate, tranid, memo
     FROM transaction
     WHERE type = 'Journal'
-    AND trandate >= TO_DATE('2025-01-01','YYYY-MM-DD')
+    AND trandate >= TO_DATE('<start_date>','YYYY-MM-DD')
     ORDER BY trandate DESC
 """
 
 
 @mcp.tool()
-def suiteql_query(query: str, limit: int = 1000, offset: int = 0) -> str:
+def suiteql_query(query: str, limit: int = 100, offset: int = 0) -> str:
     """
     Run a SuiteQL query against NetSuite.
 
-    SuiteQL is a SQL-like query language for NetSuite data. Use this as the
-    primary tool for all data retrieval — it is faster and more flexible than
-    get_record for anything beyond a single record lookup.
-
-    ## Key Tables
-    - vendorbill         — AP bills (vendor invoices). Use instead of transaction WHERE type='VendBill' (that does NOT work)
-    - transaction        — all transaction types EXCEPT vendor bills; filter by type (e.g. 'Journal', 'CustInvc', 'VendPymt')
-    - transactionline    — line-level detail for any transaction; join on transactionline.transaction = transaction.id
-    - account            — chart of accounts
-    - vendor             — vendor master; fields: id, entityid, companyname
-    - customer           — customer master
-    - entity             — base entity table (vendors, customers, employees share this); fields: id, entityid, altname
-    - employee           — employee records
-    - department         — department/cost center hierarchy
-    - subsidiary         — legal entity / subsidiary
-    - location           — warehouse and office locations
-    - accountingperiod   — fiscal periods; fields: id, periodname, startdate, enddate
-
-    ## Known Working Columns
-
-    vendorbill:
-    - id, tranid, trandate, duedate, entity, status, total, custbody_pel_usd_equivalent — all work
-    - total is in the bill's local currency (TWD, GBP, EUR, etc.) — do NOT aggregate across vendors
-    - custbody_pel_usd_equivalent is the USD equivalent — always use this for AP totals and aging
-    - amount, amountremaining — do NOT exist
-    - status codes: A = Open (unpaid), B = Paid In Full, D = Voided
-
-    account:
-    - Use accttype (not type) for account type — 'type' causes a query error
-
-    ## Date Filtering
-    Use TO_DATE with explicit format string:
-        WHERE trandate >= TO_DATE('2025-01-01', 'YYYY-MM-DD')
-    String comparison also works for simple cases:
-        WHERE trandate >= '2025-01-01'
-
-    ## JOIN Patterns
-    Joining entity.altname in a GROUP BY clause causes errors. Instead:
-    1. GROUP BY entity ID
-    2. Resolve names in a second query against the vendor or entity table
+    SuiteQL is SQL-like. Use this as the primary tool for all data retrieval.
+    For schema details, table names, known columns, and gotchas, load the
+    `netsuite_schema_guide` prompt first.
 
     ## Pagination
-    Max 1000 rows per request. If has_more is true in the result, call again
-    with the returned next_offset value to fetch the next page.
+    Default limit is 100 rows (max 1000). If has_more is true, call again
+    with the returned next_offset to fetch the next page.
 
     ## Response shape
     {
@@ -220,37 +187,9 @@ def suiteql_query(query: str, limit: int = 1000, offset: int = 0) -> str:
       "next_offset": N|null   -- pass as offset to fetch the next page; null when has_more is false
     }
 
-    ## Examples
-
-    Open AP aging summary (use custbody_pel_usd_equivalent, not total):
-        SELECT
-          CASE
-            WHEN duedate >= TO_DATE('2026-03-13','YYYY-MM-DD') THEN 'Current'
-            WHEN duedate >= TO_DATE('2026-02-11','YYYY-MM-DD') THEN '1-30 Days'
-            WHEN duedate >= TO_DATE('2026-01-12','YYYY-MM-DD') THEN '31-60 Days'
-            ELSE '90+ Days'
-          END AS aging_bucket,
-          COUNT(*) AS bill_count,
-          SUM(custbody_pel_usd_equivalent) AS total_usd
-        FROM vendorbill
-        WHERE status = 'A'
-        GROUP BY CASE ... END
-
-    Recent journal entries:
-        SELECT id, trandate, tranid, memo FROM transaction
-        WHERE type = 'Journal' AND trandate >= TO_DATE('2025-01-01','YYYY-MM-DD')
-        ORDER BY trandate DESC
-
-    GL detail for an account:
-        SELECT t.trandate, t.tranid, t.memo, tl.debit, tl.credit, tl.account
-        FROM transaction t
-        JOIN transactionline tl ON tl.transaction = t.id
-        WHERE tl.account = 1234
-        ORDER BY t.trandate DESC
-
     Args:
         query: SuiteQL query string
-        limit: Max rows to return (default 1000, max 1000)
+        limit: Max rows to return (default 100, max 1000)
         offset: Row offset for pagination (default 0)
     """
     try:
@@ -310,6 +249,39 @@ def list_record_types() -> str:
         return f"NetSuite API error {e.status_code}: {e.body}"
     except Exception as e:
         return f"Error listing record types: {str(e)}"
+
+
+@mcp.tool()
+def resolve_ids(record_type: str, ids: list[int]) -> str:
+    """
+    Resolve a list of NetSuite internal IDs to human-readable names.
+
+    Use this after a SuiteQL query returns numeric IDs (entity, account,
+    department, etc.) to label them without writing a manual JOIN or a
+    separate SELECT ... WHERE id IN (...) query.
+
+    Supported record_type values:
+      vendor, customer, employee, account, department, location, subsidiary
+
+    Returns a JSON object mapping each ID (as a string) to its name.
+
+    Example:
+        resolve_ids("vendor", [1234, 5678])
+        -> {"1234": "Acme Corp", "5678": "Global Supplies Ltd"}
+
+    Args:
+        record_type: One of the supported types listed above
+        ids: List of internal integer IDs to resolve
+    """
+    try:
+        result = client.resolve_ids(record_type, ids)
+        return json.dumps(result, indent=2)
+    except ValueError as e:
+        return f"Error: {str(e)}"
+    except NetSuiteAPIError as e:
+        return f"NetSuite API error {e.status_code}: {e.body}"
+    except Exception as e:
+        return f"Error resolving IDs: {str(e)}"
 
 
 @mcp.resource("netsuite://schema-guide")
