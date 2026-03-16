@@ -16,7 +16,7 @@ class NetSuiteClient:
     def __init__(self):
         self.account_id = os.environ["NETSUITE_ACCOUNT_ID"]
         self.base_url = f"https://{self.account_id.replace('_', '-').lower()}.suitetalk.api.netsuite.com/services/rest"
-        self.auth = OAuth1(
+        auth = OAuth1(
             client_key=os.environ["NETSUITE_CONSUMER_KEY"].strip(),
             client_secret=os.environ["NETSUITE_CONSUMER_SECRET"].strip(),
             resource_owner_key=os.environ["NETSUITE_TOKEN_ID"].strip(),
@@ -24,6 +24,8 @@ class NetSuiteClient:
             signature_method="HMAC-SHA256",
             realm=self.account_id.upper().replace("-", "_"),
         )
+        self.session = requests.Session()
+        self.session.auth = auth
 
     def _raise_for_status(self, response: requests.Response) -> None:
         """Raise NetSuiteAPIError with the full response body on HTTP errors."""
@@ -37,7 +39,7 @@ class NetSuiteClient:
         headers = {"Content-Type": "application/json", "Prefer": "transient"}
         payload = {"q": query}
         params = {"limit": limit, "offset": offset}
-        response = requests.post(url, json=payload, params=params, headers=headers, auth=self.auth)
+        response = self.session.post(url, json=payload, params=params, headers=headers)
         self._raise_for_status(response)
         return response.json()
 
@@ -46,12 +48,12 @@ class NetSuiteClient:
         params = {}
         if fields:
             params["fields"] = ",".join(fields)
-        response = requests.get(url, params=params, auth=self.auth)
+        response = self.session.get(url, params=params)
         self._raise_for_status(response)
         return response.json()
 
     def list_record_types(self) -> dict:
         url = f"{self.base_url}/record/v1/metadata-catalog"
-        response = requests.get(url, auth=self.auth, headers={"Accept": "application/json"})
+        response = self.session.get(url, headers={"Accept": "application/json"})
         self._raise_for_status(response)
         return response.json()
