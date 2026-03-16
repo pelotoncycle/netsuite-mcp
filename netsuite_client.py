@@ -2,6 +2,13 @@ import os
 from requests_oauthlib import OAuth1
 import requests
 
+# (connect_timeout, read_timeout) in seconds.
+# connect_timeout: time to establish the TCP connection.
+# read_timeout: time to wait for the server to send a response.
+# SuiteQL queries can be slow on a loaded instance; 120s read timeout is
+# generous but still prevents infinite hangs from tying up the connection.
+DEFAULT_TIMEOUT = (10, 120)
+
 
 class NetSuiteAPIError(Exception):
     """Raised when the NetSuite API returns an HTTP error response."""
@@ -13,9 +20,10 @@ class NetSuiteAPIError(Exception):
 
 
 class NetSuiteClient:
-    def __init__(self):
+    def __init__(self, timeout: tuple[int, int] = DEFAULT_TIMEOUT):
         self.account_id = os.environ["NETSUITE_ACCOUNT_ID"]
         self.base_url = f"https://{self.account_id.replace('_', '-').lower()}.suitetalk.api.netsuite.com/services/rest"
+        self.timeout = timeout
         auth = OAuth1(
             client_key=os.environ["NETSUITE_CONSUMER_KEY"].strip(),
             client_secret=os.environ["NETSUITE_CONSUMER_SECRET"].strip(),
@@ -39,7 +47,7 @@ class NetSuiteClient:
         headers = {"Content-Type": "application/json", "Prefer": "transient"}
         payload = {"q": query}
         params = {"limit": limit, "offset": offset}
-        response = self.session.post(url, json=payload, params=params, headers=headers)
+        response = self.session.post(url, json=payload, params=params, headers=headers, timeout=self.timeout)
         self._raise_for_status(response)
         return response.json()
 
@@ -48,12 +56,12 @@ class NetSuiteClient:
         params = {}
         if fields:
             params["fields"] = ",".join(fields)
-        response = self.session.get(url, params=params)
+        response = self.session.get(url, params=params, timeout=self.timeout)
         self._raise_for_status(response)
         return response.json()
 
     def list_record_types(self) -> dict:
         url = f"{self.base_url}/record/v1/metadata-catalog"
-        response = self.session.get(url, headers={"Accept": "application/json"})
+        response = self.session.get(url, headers={"Accept": "application/json"}, timeout=self.timeout)
         self._raise_for_status(response)
         return response.json()
